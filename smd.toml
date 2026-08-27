@@ -1,0 +1,31 @@
+[project]
+  name = "mojo-immage"
+
+[container]
+  workdir = "/app"
+
+[security]
+  allow_env = []
+
+[volume]
+  enabled = false
+  [volume.packages]
+
+[port]
+
+[session]
+  ports = []
+
+[live]
+  mount_pwd = true
+  ports = []
+
+[temp]
+  allow_env = []
+  mount_pwd = true
+  read_only = false
+
+[dockerfile]
+  lines = ["FROM docker.io/debian:bookworm-slim"]
+
+# For more information see: smd --help | smd --agent | smd --toml

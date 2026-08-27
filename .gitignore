@@ -3,3 +3,4 @@
 .pixi/
 build/
 examples/hello
+.agents/

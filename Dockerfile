@@ -1,30 +1,30 @@
 # syntax=docker/dockerfile:1
 #
-# mojo-immage — Build-/Dev-Image für Mojo 1.0 (Modular, CLI `mojo`).
+# mojo-immage — Build/Dev image for Mojo 1.0 (Modular, CLI `mojo`).
 #
-# Dieses Image enthält die komplette Mojo-Toolchain über pixi (conda).
-# Es ist als "builder" für Multi-Stage-Builds gedacht:
+# This image contains the complete Mojo toolchain via pixi (conda).
+# It is intended as a "builder" for multi-stage builds:
 #
 #   FROM ghcr.io/lukaslow/mojo:1.0.0 AS build
 #   COPY app.mojo ./
 #   RUN mojo build app.mojo -o /app/app
 #
-# Basis ist debian:bookworm-slim (glibc). NICHT alpine — pixi/conda-Pakete
-# sind glibc-basiert und brechen unter musl (siehe README).
+# Base is debian:bookworm-slim (glibc). NOT alpine — pixi/conda packages are
+# glibc-based and break under musl (see README).
 
-# ---- Konfiguration ----
+# ---- Configuration ----
 ARG MOJO_VERSION=1.0.0
 
 FROM debian:bookworm-slim
 
 ARG MOJO_VERSION
 
-# Installiere die Mindestmenge an Paketen:
-#   curl            → pixi-Installationsskript herunterladen
-#   ca-certificates → HTTPS-Downloads
-#   git             → pixi kann für Channel-Metadaten git brauchen
-#   bash            → pixi-Installationsskript
-#   gcc + libc6-dev → der Mojo-Compiler braucht beim Linken einen C-Compiler
+# Install the minimal set of packages:
+#   curl            → download the pixi installer script
+#   ca-certificates → HTTPS downloads
+#   git             → pixi may need git for channel metadata
+#   bash            → pixi installer script
+#   gcc + libc6-dev → the Mojo compiler needs a C compiler when linking
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
@@ -34,19 +34,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# pixi offiziell installieren → installiert nach ~/.pixi, hier /root/.pixi.
+# Install pixi officially → installs into ~/.pixi, here /root/.pixi.
 RUN curl -fsSL https://pixi.sh/install.sh | bash
 ENV PATH="/root/.pixi/bin:${PATH}"
 
-# pixi-Projekt anlegen und Mojo installieren.
-# Die pixi.toml wird per heredoc mit der ARG-Version generiert, damit
-# MOJO_VERSION nur an einer Stelle gepflegt wird. Zuerst installieren,
-# damit das Mojo-Image-Caching nicht durch spätere Layer zerstört wird.
+# Create a pixi project and install Mojo.
+# The pixi.toml is generated via heredoc with the ARG version, so that
+# MOJO_VERSION is maintained in only one place. Install first so that the
+# Mojo image caching is not broken by later layers.
 WORKDIR /opt/mojo
 
-# Version in die pixi.toml einsetzen (>=x,<2 statt exakt == → robuster,
-# erlaubt patch/revision-Updates der Conda-Builds innerhalb der Major-Version).
-# Heredoc mit unquotiertem Delimiter: ${MOJO_VERSION} wird von der Shell expandiert.
+# Substitute the version into pixi.toml (>=x,<2 instead of exact == → more
+# robust, allows patch/revision updates of the conda builds within the major
+# version). Heredoc with unquoted delimiter: ${MOJO_VERSION} is expanded by the shell.
 RUN cat > pixi.toml <<EOF && pixi install
 [project]
 name = "mojo"
@@ -57,32 +57,33 @@ platforms = ["linux-64", "linux-aarch64"]
 mojo = ">=${MOJO_VERSION},<2"
 EOF
 
-# Build-Verifikation: schlägt fehl, wenn Mojo nicht startet → CI bricht früh.
+# Build verification: fails if Mojo does not start → CI breaks early.
 RUN pixi run mojo --version
 
-# Build-Time-Verifikation mit std: kompiliert und führt ein echtes Programm aus.
-# Bricht den Image-Build früh ab, falls die std-Library fehlt oder der Compiler
-# die modular.cfg nicht findet (Mojo-v1-Syntax: def, Einrückung).
-# mojo wird via pixi run aufgerufen (conda-env wird erst durch pixi aktiviert).
+# Build-time verification with std: compiles and runs a real program.
+# Aborts the image build early if the std library is missing or the compiler
+# cannot find modular.cfg (Mojo v1 syntax: def, indentation).
+# mojo is invoked via pixi run (the conda env is only activated by pixi).
 RUN printf 'def main():\n    print("std-ok")\n' > /tmp/stdtest.mojo \
     && pixi run mojo build /tmp/stdtest.mojo -o /tmp/stdtest \
     && /tmp/stdtest \
     && rm -f /tmp/stdtest /tmp/stdtest.mojo
 
-# Umgebungsvariablen für die pixi-Environment (default env).
-# MODULAR_HOME zeigt auf das Verzeichnis mit der modular.cfg. Ohne diese Variable
-# sucht der Mojo-Compiler unter dem Default /root/.modular, das im Container nicht
-# existiert → "modular.cfg not found". Die cfg liegt in der pixi-Environment.
+# Environment variables for the pixi environment (default env).
+# MODULAR_HOME points to the directory containing modular.cfg. Without this
+# variable the Mojo compiler looks under the default /root/.modular, which does
+# not exist in the container → "modular.cfg not found". The cfg lives in the
+# pixi environment.
 ENV MOJO_VERSION=${MOJO_VERSION} \
     MODULAR_HOME="/opt/mojo/.pixi/envs/default/share/max" \
     PATH="/opt/mojo/.pixi/envs/default/bin:/root/.pixi/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/mojo/.pixi/envs/default/lib"
 
-# Arbeitsverzeichnis für User-Projekte (world-writable, GOPATH-/GOROOT-Konvention).
+# Working directory for user projects (world-writable, GOPATH-/GOROOT-convention).
 WORKDIR /mojo
 RUN mkdir -p /mojo && chmod 1777 /mojo
 
-# Kein ENTRYPOINT. CMD zeigt die Version beim `docker run` ohne Argumente.
-# mojo liegt direkt im PATH (/opt/mojo/.pixi/envs/default/bin), pixi run ist
-# nicht nötig (pixi bräuchte sonst eine pixi.toml im CWD).
+# No ENTRYPOINT. CMD shows the version on `docker run` without arguments.
+# mojo is directly in the PATH (/opt/mojo/.pixi/envs/default/bin), pixi run is
+# not needed (pixi would otherwise need a pixi.toml in the CWD).
 CMD ["mojo", "--version"]

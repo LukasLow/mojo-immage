@@ -1,70 +1,77 @@
 # mojo-immage
 
-Offizielle Docker-Images für die Programmiersprache **Mojo 1.0** (Modular, CLI `mojo`).
-Es existiert kein offizielles Mojo-Docker-Image, deshalb stellt dieses Repo zwei
-Referenz-Images zur Verfügung:
+Official Docker image for the **Mojo 1.0** programming language (Modular, CLI `mojo`).
+There is no official Mojo Docker image, so this repo provides one reference image:
 
-| Image | Tag-Beispiel | Zweck |
-|-------|-------------|-------|
-| `ghcr.io/lukaslow/mojo` | `1.0.0`, `1.0`, `latest` | **Build-/Dev-Image** — volle Mojo-Toolchain (pixi), für Multi-Stage-Builds |
-| `ghcr.io/lukaslow/mojo` | `1.0.0-runtime`, `1.0-runtime`, `latest-runtime` | **Runtime-Image** — schlank, für Deployments von gebauten Mojo-Binaries |
+| Image | Tag example | Purpose |
+|-------|-------------|---------|
+| `ghcr.io/lukaslow/mojo` | `1.0.0`, `1.0`, `latest` | **Build/Dev image** — full Mojo toolchain (pixi), for multi-stage builds |
 
-## Struktur
+## Structure
 
 ```
 .
-├── Dockerfile              # Build-/Dev-Image (debian:bookworm-slim + pixi + Mojo)
-├── runtime/Dockerfile      # Runtime-Image (debian:bookworm-slim + Mojo-Libs)
-├── examples/               # Beispiel-App: hello.mojo + Multi-Stage-Dockerfile
-├── scripts/build.sh        # Lokaler Dev-Build (native Arch, kein Push)
-├── .github/workflows/ci.yml# GitHub Actions: multi-arch Build + Push nach GHCR
-└── VERSION                 # Zentrale Version ("1.0.0")
+├── Dockerfile               # Build/Dev image (debian:bookworm-slim + pixi + Mojo)
+├── examples/                # Example app: hello.mojo + multi-stage Dockerfile
+├── scripts/build.sh         # Local dev build (native arch, no push)
+├── .github/workflows/ci.yml # GitHub Actions: build → test → multi-arch push to GHCR
+└── VERSION                  # Central version ("1.0.0")
 ```
 
 ## Quickstart
 
-### Build-Image direkt nutzen
+### Use the build image directly
 
 ```bash
-# Version zeigen:
+# Show the version:
 docker run --rm ghcr.io/lukaslow/mojo:1.0.0
 
-# Interaktive Shell mit Mojo-Toolchain:
+# Interactive shell with the Mojo toolchain:
 docker run --rm -it ghcr.io/lukaslow/mojo:1.0.0 bash
 ```
 
-### Eigene App bauen (User-Workflow)
+### Build your own app (user workflow)
 
 ```bash
-# Lokal bauen:
+# Build locally:
 cd examples
 docker build -t hello-mojo .
 docker run --rm hello-mojo     # → "hello from mojo"
 ```
 
-So sieht der User-Workflow aus (siehe `examples/Dockerfile`):
+This is what the user workflow looks like (see `examples/Dockerfile`):
 
 ```dockerfile
 FROM ghcr.io/lukaslow/mojo:1.0.0 AS build
 COPY app.mojo ./
 RUN mojo build app.mojo -o /app/app
 
-FROM ghcr.io/lukaslow/mojo:1.0.0-runtime
+FROM debian:bookworm-slim
+COPY --from=build /opt/mojo/.pixi /opt/mojo/.pixi
+ENV MODULAR_HOME="/opt/mojo/.pixi/envs/default/share/max" \
+    LD_LIBRARY_PATH="/opt/mojo/.pixi/envs/default/lib"
 COPY --from=build /app/app /usr/local/bin/app
 ENTRYPOINT ["app"]
 ```
 
-## Nutzung
+### Deployment (own minimal runtime)
 
-`mojo` ist im Build-/Dev-Image **direkt im PATH** verfügbar
-(`/opt/mojo/.pixi/envs/default/bin`) — **kein `pixi run` nötig**. Du kannst das
-Binary direkt aufrufen und im Container kompilieren:
+Build your binary with this image, then run it on any minimal runtime that ships
+the Mojo runtime libraries (e.g. `debian:bookworm-slim` + the binary, as shown
+above in the example). No separate runtime image is published — the `examples/Dockerfile`
+is a ready-to-use template for that pattern.
+
+## Usage
+
+`mojo` is available in the build/Dev image **directly on the PATH**
+(`/opt/mojo/.pixi/envs/default/bin`) — **no `pixi run` needed**. You can call the
+binary directly and compile inside the container:
 
 ```bash
-# Version zeigen (auch der CMD-`docker run` ohne Argumente zeigt die Version):
+# Show the version (the CMD-`docker run` without arguments also shows it):
 docker run --rm ghcr.io/lukaslow/mojo:1.0.0 mojo --version
 
-# Im Container kompilieren und ausführen:
+# Compile and run inside the container:
 docker run --rm -it ghcr.io/lukaslow/mojo:1.0.0 bash
 #   $ echo 'def main(): print("hi")' > hi.mojo
 #   $ mojo build hi.mojo -o hi
@@ -73,60 +80,47 @@ docker run --rm -it ghcr.io/lukaslow/mojo:1.0.0 bash
 
 ## Tags
 
-Die Version kommt aus der zentralen `VERSION`-Datei (aktuell `1.0.0`). Pro Version
-werden zwei Images mit je drei Tags gepusht:
+The version comes from the central `VERSION` file (currently `1.0.0`). Each version
+is pushed with three tags:
 
-| Quelle | Build-Tags | Runtime-Tags |
-|--------|-----------|--------------|
-| `VERSION = 1.0.0` | `1.0.0`, `1.0`, `latest` | `1.0.0-runtime`, `1.0-runtime`, `latest-runtime` |
+| Source | Tags |
+|--------|------|
+| `VERSION = 1.0.0` | `1.0.0`, `1.0`, `latest` |
 
-`latest`-Tags zeigen also immer auf die zuletzt gebaute Version.
+`latest` therefore always points to the most recently built version.
 
-## Version erhöhen
+## Version bump
 
-1. `VERSION`-Datei ändern (z.B. `1.0.0` → `1.0.1`).
-2. Auf `main` pushen.
-3. CI baut beide Images (arm64 + amd64) und pusht sie nach GHCR.
+1. Change the `VERSION` file (e.g. `1.0.0` → `1.0.1`).
+2. Push to `main`.
+3. CI builds (arm64 + amd64), runs the example app as a test, and pushes to GHCR.
 
-**Alte Versionen bleiben bestehen** — ein neuer Versionseintrag überschreibt keine
-bestehenden Tags, sondern fügt neue hinzu. Rollbacks sind damit jederzeit möglich.
+**Old versions remain** — a new version entry does not overwrite existing tags,
+it adds new ones. Rollbacks are therefore always possible.
 
-## Multi-Arch
+## Multi-arch
 
-Beide Images werden per `docker buildx` für `linux/arm64` **und** `linux/amd64`
-gebaut und als Multi-Arch-Manifest gepusht. Das passiert in der CI
-(`.github/workflows/ci.yml`).
+The image is built with `docker buildx` for `linux/arm64` **and** `linux/amd64`
+and pushed as a multi-arch manifest. That happens in the CI (`.github/workflows/ci.yml`).
 
-Der lokale `scripts/build.sh` baut dagegen nur die **native** Plattform (`--load`),
-weil `docker buildx --load` keine Multi-Platform-Builds in den lokalen Daemon
-laden kann. Push übernimmt ausschließlich die CI.
+The local `scripts/build.sh` builds only the **native** platform (`--load`), because
+`docker buildx --load` cannot load multi-platform builds into the local daemon.
+Pushing is handled exclusively by the CI.
 
-## Basis-Entscheidung: debian:bookworm-slim
+## Base decision: debian:bookworm-slim
 
-Beide Images basieren auf `debian:bookworm-slim` (glibc). **Nicht alpine:**
+The image is based on `debian:bookworm-slim` (glibc). **Not alpine:**
 
-- pixi/conda-Pakete sind **glibc-basiert** und brechen unter alpine (musl libc).
-- Mojo wird über den Conda-Channel `https://conda.modular.com/max/` installiert;
-  dessen Binaries erwarten glibc.
-- Debian bookworm-slim ist bereits schlank (glibc enthalten, keine Redundanz).
+- pixi/conda packages are **glibc-based** and break under alpine (musl libc).
+- Mojo is installed via the conda channel `https://conda.modular.com/max/`;
+  its binaries expect glibc.
+- Debian bookworm-slim is already slim (glibc included, no redundancy).
 
-Das Build-Image installiert zusätzlich `gcc` + `libc6-dev`, weil der Mojo-Compiler
-beim Linken einen C-Compiler braucht (im Benchmark-Repo verifiziert).
-
-## Runtime-Image und der zirkuläre Bezug
-
-Das Runtime-Image holt sich die komplette pixi-Environment aus dem Build-Image
-(`COPY --from=libs /opt/mojo/.pixi ...`). Das Mojo-Binary ist **nicht statisch** —
-es linkt gegen Libraries aus der pixi-Umgebung (z.B. `libKGENCompilerRTShared`),
-weshalb die volle `.pixi`-Umgebung mitkopiert wird (`LD_LIBRARY_PATH` gesetzt).
-
-**Konsequenz:** Das Runtime-Image kann erst gebaut werden, nachdem das Build-Image
-existiert (und gepusht ist). Die CI baut deshalb sequentiell: erst `build`,
-dann `runtime`. Das ist Absicht — so gibt es nur eine Stelle für die Toolchain
-statt einer duplizierten pixi-Installation.
+The build image additionally installs `gcc` + `libc6-dev`, because the Mojo compiler
+needs a C compiler when linking (verified in the benchmark repo).
 
 ## Registry
 
 Registry: **`ghcr.io/lukaslow/mojo`** (GitHub Container Registry).
 
-CI-Trigger: Push auf `main` (oder manuell via `workflow_dispatch`).
+CI trigger: push to `main` (or manual via `workflow_dispatch`).

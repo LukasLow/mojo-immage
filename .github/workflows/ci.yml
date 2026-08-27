@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 jobs:
-  build-and-push:
+  build-test-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,9 +36,33 @@ jobs:
           echo "VERSION=${V}" >> "$GITHUB_OUTPUT"
           echo "VERSION_MAJOR_MINOR=${V%.*}" >> "$GITHUB_OUTPUT"
 
-      # Das Build-Image MUSS zuerst existieren (und gepusht sein), weil das
-      # Runtime-Image per COPY --from=libs davon abhängt → sequentiell.
-      - name: Build and push build-image
+      # Build the build image for the runner platform (linux/amd64) and load it
+      # into the local daemon so the example build in the "test" step can use it.
+      - name: Build build image (load)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: |
+            ghcr.io/lukaslow/mojo:${{ steps.version.outputs.VERSION }}
+            ghcr.io/lukaslow/mojo:${{ steps.version.outputs.VERSION_MAJOR_MINOR }}
+            ghcr.io/lukaslow/mojo:latest
+          build-args: |
+            MOJO_VERSION=${{ steps.version.outputs.VERSION }}
+
+      # Test: build the example app with the freshly built (local) image and
+      # verify its output. If this fails the job fails and no push happens.
+      - name: Test example app
+        run: |
+          docker build \
+            --build-arg MOJO_IMAGE=ghcr.io/lukaslow/mojo:${{ steps.version.outputs.VERSION }} \
+            -t mojo-hello-test \
+            ./examples
+          docker run --rm mojo-hello-test | grep -q "hello from mojo"
+
+      # Only now push the multi-arch (arm64 + amd64) build to GHCR.
+      - name: Build and push build image (multi-arch)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -50,17 +74,3 @@ jobs:
             ghcr.io/lukaslow/mojo:latest
           build-args: |
             MOJO_VERSION=${{ steps.version.outputs.VERSION }}
-
-      - name: Build and push runtime-image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./runtime
-          platforms: linux/arm64,linux/amd64
-          push: true
-          tags: |
-            ghcr.io/lukaslow/mojo:${{ steps.version.outputs.VERSION }}-runtime
-            ghcr.io/lukaslow/mojo:${{ steps.version.outputs.VERSION_MAJOR_MINOR }}-runtime
-            ghcr.io/lukaslow/mojo:latest-runtime
-          build-args: |
-            MOJO_VERSION=${{ steps.version.outputs.VERSION }}
-            REGISTRY=ghcr.io/lukaslow/mojo
